@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gesture Capture</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            background: #f4f4f4;
+        }
+
+        video {
+            width: 400px;
+            border-radius: 10px;
+            margin-top: 10px;
+        }
+
+        .box {
+            margin: 10px;
+            padding: 10px;
+            background: white;
+            display: inline-block;
+            border-radius: 10px;
+            min-width: 300px;
+        }
+
+        button {
+            padding: 10px 15px;
+            margin: 10px;
+            cursor: pointer;
+        }
+
+        #result {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        #intent {
+            font-size: 18px;
+            color: green;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>Real-Time Gesture Recognition</h2>
+
+<video id="webcam" autoplay playsinline></video>
+
+<div class="box">
+    <p id="gesture">Gesture: -</p>
+    <p id="sequence">Sequence: -</p>
+    <p id="intent">Intent: -</p>
+</div>
+
+<br>
+
+<button onclick="finishConversation()">DONE</button>
+<button onclick="resetBuffer()">RESET</button>
+
+<h2 id="result"></h2>
+
+<script>
+
+const webcam = document.getElementById("webcam");
+const gestureText = document.getElementById("gesture");
+const sequenceText = document.getElementById("sequence");
+const resultBox = document.getElementById("result");
+const intentText = document.getElementById("intent");
+
+let streamStarted = false;
+let isProcessing = false;
+
+// CAMERA START
+navigator.mediaDevices.getUserMedia({ video: true })
+.then(stream => {
+    webcam.srcObject = stream;
+
+    webcam.onloadedmetadata = () => {
+        streamStarted = true;
+        captureFrame();
+    };
+})
+.catch(err => {
+    console.log("Camera Error:", err);
+});
+
+// REAL-TIME LOOP
+async function captureFrame() {
+
+    if (!streamStarted) {
+        setTimeout(captureFrame, 500);
+        return;
+    }
+
+    // prevent API overload
+    if (isProcessing) {
+        setTimeout(captureFrame, 200);
+        return;
+    }
+
+    isProcessing = true;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = webcam.videoWidth;
+    canvas.height = webcam.videoHeight;
+
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(webcam, 0, 0);
+
+    const dataURL = canvas.toDataURL("image/jpeg");
+
+    try {
+        const res = await fetch("/predict", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ image: dataURL })
+        });
+
+        const data = await res.json();
+
+        gestureText.innerText = "Gesture: " + data.gesture;
+        sequenceText.innerText = "Sequence: " + (data.buffer || []).join(" ");
+
+    } catch (err) {
+        console.log("Error:", err);
+    }
+
+    isProcessing = false;
+
+    setTimeout(captureFrame, 400);
+}
+
+// SPEECH
+function speak(text) {
+    if (!text) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    window.speechSynthesis.speak(utter);
+}
+
+// FINISH (GEMINI RESPONSE)
+async function finishConversation() {
+
+    resultBox.innerText = "Processing sentence... ⏳";
+    intentText.innerText = "Detecting intent... ⏳";
+
+    try {
+        const res = await fetch("/finish", { method: "POST" });
+        const data = await res.json();
+
+        resultBox.innerText = data.final_sentence;
+
+        // intent support (if backend gives it)
+        if (data.intent) {
+            intentText.innerText = "Intent: " + data.intent;
+        } else {
+            intentText.innerText = "Intent: -";
+        }
+
+        speak(data.final_sentence);
+
+    } catch (err) {
+        console.log("Finish Error:", err);
+        resultBox.innerText = "Error generating sentence";
+    }
+}
+
+// RESET
+async function resetBuffer() {
+    await fetch("/reset", { method: "POST" });
+
+    resultBox.innerText = "";
+    gestureText.innerText = "Gesture: -";
+    sequenceText.innerText = "Sequence: -";
+    intentText.innerText = "Intent: -";
+}
+
+</script>
+
+</body>
+</html>
